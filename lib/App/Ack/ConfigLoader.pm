@@ -26,7 +26,10 @@ sub configure_parser {
         no_ignore_case
     );
     Getopt::Long::Configure( @standard, @opts );
+
+    return;
 }
+
 
 sub _generate_ignore_dir {
     my ( $option_name, $opt ) = @_;
@@ -264,8 +267,13 @@ sub get_arg_spec {
         return;
     }
 
+    $opt->{and} = [];
+    $opt->{or} = [];
+    $opt->{not} = [];
+
     return {
         1                   => sub { $opt->{1} = $opt->{m} = 1 },
+        'and=s'             => $opt->{and},
         'A|after-context:-1'  => sub { shift; $opt->{A} = _context_value(shift) },
         'B|before-context:-1' => sub { shift; $opt->{B} = _context_value(shift) },
         'C|context:-1'        => sub { shift; $opt->{B} = $opt->{A} = _context_value(shift) },
@@ -327,6 +335,8 @@ sub get_arg_spec {
         },
         'noignore-directory|noignore-dir=s' => _generate_ignore_dir('--noignore-dir', $opt),
         'nopager'           => sub { $opt->{pager} = undef },
+        'not=s'             => $opt->{not},
+        'or=s'              => $opt->{or},
         'passthru'          => \$opt->{passthru},
         'print0'            => \$opt->{print0},
         'p|proximate:1'     => \$opt->{p},
@@ -895,6 +905,9 @@ sub mutex_options {
             g => 1,
             l => 1,
         },
+        I => {
+            f => 1,
+        },
         L => {
             A => 1,
             B => 1,
@@ -918,6 +931,11 @@ sub mutex_options {
             'show-types' => 1,
             v => 1,
             'with-filename' => 1,
+        },
+        and => {
+            g => 1,
+            not => 1,
+            or => 1,
         },
         break => {
             L => 1,
@@ -959,6 +977,7 @@ sub mutex_options {
             B => 1,
             C => 1,
             H => 1,
+            I => 1,
             L => 1,
             break => 1,
             c => 1,
@@ -969,6 +988,7 @@ sub mutex_options {
             group => 1,
             h => 1,
             heading => 1,
+            i => 1,
             l => 1,
             m => 1,
             match => 1,
@@ -976,6 +996,7 @@ sub mutex_options {
             output => 1,
             p => 1,
             passthru => 1,
+            'smart-case' => 1,
             u => 1,
             v => 1,
             x => 1,
@@ -991,6 +1012,7 @@ sub mutex_options {
             C => 1,
             H => 1,
             L => 1,
+            and => 1,
             break => 1,
             c => 1,
             column => 1,
@@ -1003,7 +1025,9 @@ sub mutex_options {
             l => 1,
             m => 1,
             match => 1,
+            not => 1,
             o => 1,
+            or => 1,
             output => 1,
             p => 1,
             passthru => 1,
@@ -1029,6 +1053,9 @@ sub mutex_options {
             f => 1,
             g => 1,
             l => 1,
+        },
+        i => {
+            f => 1,
         },
         l => {
             A => 1,
@@ -1067,6 +1094,10 @@ sub mutex_options {
             L => 1,
             l => 1,
         },
+        not => {
+            and => 1,
+            g => 1,
+        },
         o => {
             A => 1,
             B => 1,
@@ -1083,6 +1114,10 @@ sub mutex_options {
             passthru => 1,
             'show-types' => 1,
             v => 1,
+        },
+        or => {
+            and => 1,
+            g => 1,
         },
         output => {
             A => 1,
@@ -1138,6 +1173,9 @@ sub mutex_options {
             l => 1,
             o => 1,
             output => 1,
+        },
+        'smart-case' => {
+            f => 1,
         },
         u => {
             f => 1,

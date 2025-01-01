@@ -152,7 +152,7 @@ sub _options_block {
 # core dumps
 --ignore-file=match:/core[.]\d+$/
 
-# minified Javascript
+# minified JavaScript
 --ignore-file=match:/[.-]min[.]js$/
 --ignore-file=match:/[.]js[.]min$/
 
@@ -186,6 +186,10 @@ sub _options_block {
 
 # Compiled gettext files
 --ignore-file=ext:mo
+
+# Visual Studio user and workspace settings
+# https://code.visualstudio.com/docs/getstarted/settings
+--ignore-dir=is:.vscode
 
 ### Filetypes defined
 
@@ -267,6 +271,10 @@ sub _options_block {
 
 # C#
 --type-add=csharp:ext:cs
+
+# Crystal-lang
+# https://crystal-lang.org/
+--type-add=crystal:ext:cr,ecr
 
 # CSS
 # https://www.w3.org/Style/CSS/
@@ -396,6 +404,11 @@ sub _options_block {
 # https://plone.org/
 --type-add=plone:ext:pt,cpt,metadata,cpy,py
 
+# PowerShell
+# https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_scripts
+# https://learn.microsoft.com/en-us/powershell/scripting/developer/module/understanding-a-windows-powershell-module
+--type-add=powershell:ext:ps1,psm1
+
 # PureScript
 # https://www.purescript.org
 --type-add=purescript:ext:purs
@@ -405,9 +418,17 @@ sub _options_block {
 --type-add=python:ext:py
 --type-add=python:firstlinematch:/^#!.*\bpython/
 
+# Pytest
+# https://pytest.org/
+# Pytest files are *.py files that start with test_ or end with _test.py
+# https://docs.pytest.org/en/stable/explanation/goodpractices.html#test-discovery
+--type-add=pytest:match:_test\.py$
+--type-add=pytest:match:^test_.*\.py$
+
 # R
 # https://www.r-project.org/
---type-add=rr:ext:R
+# https://r4ds.had.co.nz/r-markdown.html
+--type-add=rr:ext:R,Rmd
 
 # reStructured Text
 # https://docutils.sourceforge.io/rst.html
@@ -429,7 +450,7 @@ sub _options_block {
 
 # Scala
 # https://www.scala-lang.org/
---type-add=scala:ext:scala
+--type-add=scala:ext:scala,sbt
 
 # Scheme
 # https://groups.csail.mit.edu/mac/projects/scheme/
@@ -468,6 +489,10 @@ sub _options_block {
 # https://www.tcl.tk/
 --type-add=tcl:ext:tcl,itcl,itk
 
+# Terraform
+# https://github.com/hashicorp/terraform
+--type-add=terraform=.tf,.tfvars
+
 # TeX & LaTeX
 # https://www.latex-project.org/
 --type-add=tex:ext:tex,cls,sty
@@ -480,7 +505,7 @@ sub _options_block {
 # https://toml.io/
 --type-add=toml:ext:toml
 
-# Typescript
+# TypeScript
 # https://www.typescriptlang.org/
 --type-add=ts:ext:ts,tsx
 

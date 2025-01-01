@@ -256,11 +256,11 @@ Note, this requires L<Pod::Markdown|https://metacpan.org/pod/Pod::Markdown> plug
 
 =head1 EXAMPLES OF C<< --output >>
 
-The C<-o> and C<< --output expr >> options allow for specifying and formating the output.
+The C<-o> and C<< --output expr >> options allow for specifying and formatting the output.
 
 With look-behind and look-ahead, one "match without matching" for highlighting or C<-o>) purposes.
 The  regex C<< abc\K(def)(?=ghi) >>  will highlight ONLY C<def> in the text, \
-but only if that string is preceeded by C<abc> and C<ghi> follows.
+but only if that string is preceded by C<abc> and C<ghi> follows.
 With C<-o>, it will output C<def> but only when found in context of C<abc>B<<C<def>>>C<ghi>.
 
 HT to L<HN|https://news.ycombinator.com/item?id=15433310>
@@ -578,7 +578,7 @@ If the files aren't in nor wanted in sorted order, the shell command or alias ne
 
 with modern C<bash>'s C<< <() >> command substitution as file-pipes.
 
-(That C<< <(fileter $f1) <(filter $f2) >> idiom is also good for pre-filtering input to C<diff> etc.)
+(That C<< <(filter $f1) <(filter $f2) >> idiom is also good for pre-filtering input to C<diff> etc.)
 
 Note for Windows users: Microsoft and Cygwin both provide Linux/GNU commandline utilities for Windows.
 They may have come with the Perl you're using for Ack.
