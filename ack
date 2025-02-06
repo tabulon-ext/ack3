@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-our $VERSION = 'v3.5.0'; # Check https://beyondgrep.com/ for updates
+our $VERSION = 'v3.8.1'; # Check https://beyondgrep.com/ for updates
 
 use 5.010001;
 
@@ -46,7 +46,6 @@ our $opt_passthru;
 our $opt_p;
 our $opt_range_start;
 our $opt_range_end;
-our $opt_range_invert;
 our $opt_regex;
 our $opt_show_filename;
 our $opt_show_types;
@@ -56,11 +55,17 @@ our $opt_v;
 # Flag if we need any context tracking.
 our $is_tracking_context;
 
-# The regex that we search for in each file.
-our $search_re;
+# The regex that we use to match each line in the file.
+our $re_match;
 
-# Special /m version of our $search_re.
-our $scan_re;
+# Regex for matching for highlighting in matched lines.
+our $re_hilite;
+
+# The regex that matches for things we want to exclude via the --not option.
+our $re_not;
+
+# Version of the match regex for checking to see if the file should be scanned line-by-line.
+our $re_scan;
 
 our @special_vars_used_by_opt_output;
 
@@ -149,7 +154,6 @@ MAIN: {
     $opt_passthru       = $opt->{passthru};
     $opt_range_start    = $opt->{range_start};
     $opt_range_end      = $opt->{range_end};
-    $opt_range_invert   = $opt->{range_invert};
     $opt_regex          = $opt->{regex};
     $opt_show_filename  = $opt->{show_filename};
     $opt_show_types     = $opt->{show_types};
@@ -161,10 +165,10 @@ MAIN: {
     }
 
     if ( $opt_range_start ) {
-        ($opt_range_start, undef) = build_regex( $opt_range_start, {} );
+        ($opt_range_start, undef) = App::Ack::build_regex( $opt_range_start, {} );
     }
     if ( $opt_range_end ) {
-        ($opt_range_end, undef)   = build_regex( $opt_range_end, {} );
+        ($opt_range_end, undef)   = App::Ack::build_regex( $opt_range_end, {} );
     }
     $using_ranges = $opt_range_start || $opt_range_end;
 
@@ -205,14 +209,18 @@ MAIN: {
         }
     }
 
+
     # Set up file filters.
     my $files;
     if ( $App::Ack::is_filter_mode && !$opt->{files_from} ) { # probably -x
         $files     = App::Ack::Files->from_stdin();
         $opt_regex //= shift @ARGV;
-        ($search_re, $scan_re) = build_regex( $opt_regex, $opt );
-        $stats{search_re} = $search_re;
-        $stats{scan_re} = $scan_re;
+        defined $opt_regex or App::Ack::die( 'No regular expression found.' );
+        ($re_match, $re_not, $re_hilite, $re_scan) = App::Ack::build_all_regexes( $opt_regex, $opt );
+        $stats{re_match}  = $re_match;
+        $stats{re_not}    = $re_not;
+        $stats{re_hilite} = $re_hilite;
+        $stats{re_scan}   = $re_scan;
     }
     else {
         if ( $opt_f ) {
@@ -220,13 +228,12 @@ MAIN: {
         }
         else {
             $opt_regex //= shift @ARGV;
-            ($search_re, $scan_re) = build_regex( $opt_regex, $opt );
-            $stats{search_re} = $search_re;
-            $stats{scan_re} = $scan_re;
-        }
-        # XXX What is this checking for?
-        if ( $search_re && $search_re =~ /\n/ ) {
-            App::Ack::exit_from_ack( 0 );
+            defined $opt_regex or App::Ack::die( 'No regular expression found.' );
+            ($re_match, $re_not, $re_hilite, $re_scan) = App::Ack::build_all_regexes( $opt_regex, $opt );
+            $stats{re_match}  = $re_match;
+            $stats{re_not}    = $re_not;
+            $stats{re_hilite} = $re_hilite;
+            $stats{re_scan}   = $re_scan;
         }
         my @start;
         if ( not defined $opt->{files_from} ) {
@@ -274,7 +281,7 @@ MAIN: {
 
     if ( $opt_debug ) {
         require List::Util;
-        my @stats = qw( search_re scan_re prescans linescans filematches linematches );
+        my @stats = qw( re_match re_scan re_not prescans linescans filematches linematches );
         my $width = List::Util::max( map { length } @stats );
 
         for my $stat ( @stats ) {
@@ -285,9 +292,11 @@ MAIN: {
     close $App::Ack::fh;
 
     App::Ack::exit_from_ack( $nmatches );
-}
+} # End of MAIN
 
-# End of MAIN
+
+exit 0;
+
 
 sub file_loop_fg {
     my $files = shift;
@@ -314,9 +323,14 @@ sub file_loop_fg {
 sub file_loop_c {
     my $files = shift;
 
+    my $nmatched_files = 0;
+
     my $total_count = 0;
     while ( defined( my $file = $files->next ) ) {
         my $matches_for_this_file = count_matches_in_file( $file );
+        if ( $matches_for_this_file ) {
+            ++$nmatched_files;
+        }
 
         if ( not $opt_show_filename ) {
             $total_count += $matches_for_this_file;
@@ -341,7 +355,7 @@ sub file_loop_c {
         App::Ack::say( $total_count );
     }
 
-    return;
+    return $nmatched_files;
 }
 
 
@@ -394,6 +408,7 @@ sub _compile_descend_filter {
     };
 }
 
+
 sub _compile_file_filter {
     my ( $opt, $start ) = @_;
 
@@ -425,7 +440,7 @@ sub _compile_file_filter {
 
     return sub {
         if ( $opt_g ) {
-            if ( $File::Next::name =~ /$search_re/o ) {
+            if ( $File::Next::name =~ /$re_match/o ) {
                 return 0 if $opt_v;
             }
             else {
@@ -446,7 +461,7 @@ sub _compile_file_filter {
             else {
                 my @dirs = File::Spec->splitdir($File::Next::dir);
 
-                my $is_ignoring = 0;
+                my $is_ignoring;
 
                 for ( my $i = 0; $i < @dirs; $i++) {
                     my $dir_rsrc = App::Ack::File->new(File::Spec->catfile(@dirs[0 .. $i]));
@@ -500,7 +515,7 @@ sub _compile_file_filter {
             $match_found = 0;
         }
         return $match_found;
-    };
+    };  # End of compiled sub
 }
 
 
@@ -525,97 +540,6 @@ sub get_file_id {
     }
 }
 
-# Returns a regex object based on a string and command-line options.
-# Dies when the regex $str is undefined (i.e. not given on command line).
-
-sub build_regex {
-    my $str = shift;
-    my $opt = shift;
-
-    defined $str or App::Ack::die( 'No regular expression found.' );
-
-    if ( !$opt->{Q} ) {
-        # Compile the regex to see if it dies or throws warnings.
-        local $SIG{__WARN__} = sub { die @_ };  # Anything that warns becomes a die.
-        my $scratch_regex = eval { qr/$str/ };
-        if ( not $scratch_regex ) {
-            my $err = $@;
-            chomp $err;
-
-            if ( $err =~ m{^(.+?); marked by <-- HERE in m/(.+?) <-- HERE} ) {
-                my ($why, $where) = ($1,$2);
-                my $pointy = ' ' x (6+length($where)) . '^---HERE';
-                App::Ack::die( "Invalid regex '$str'\nRegex: $str\n$pointy $why" );
-            }
-            else {
-                App::Ack::die( "Invalid regex '$str'\n$err" );
-            }
-        }
-    }
-
-    # Check for lowercaseness before we do any modifications.
-    my $regex_is_lc = App::Ack::is_lowercase( $str );
-
-    $str = quotemeta( $str ) if $opt->{Q};
-
-    my $scan_str = $str;
-
-    # Whole words only.
-    if ( $opt->{w} ) {
-        my $ok = 1;
-
-        if ( $str =~ /^\\[wd]/ ) {
-            # Explicit \w is good.
-        }
-        else {
-            # Can start with \w, (, [ or dot.
-            if ( $str !~ /^[\w\(\[\.]/ ) {
-                $ok = 0;
-            }
-        }
-
-        # Can end with \w, }, ), ], +, *, or dot.
-        if ( $str !~ /[\w\}\)\]\+\*\?\.]$/ ) {
-            $ok = 0;
-        }
-        # ... unless it's escaped.
-        elsif ( $str =~ /\\[\}\)\]\+\*\?\.]$/ ) {
-            $ok = 0;
-        }
-
-        if ( !$ok ) {
-            App::Ack::die( '-w will not do the right thing if your regex does not begin and end with a word character.' );
-        }
-
-        if ( $str =~ /^\w+$/ ) {
-            # No need for fancy regex if it's a simple word.
-            $str = sprintf( '\b(?:%s)\b', $str );
-        }
-        else {
-            $str = sprintf( '(?:^|\b|\s)\K(?:%s)(?=\s|\b|$)', $str );
-        }
-    }
-
-    if ( $opt->{i} || ($opt->{S} && $regex_is_lc) ) {
-        $_ = "(?i)$_" for ( $str, $scan_str );
-    }
-
-    my $scan_regex = undef;
-    my $regex = eval { qr/$str/ };
-    if ( $regex ) {
-        if ( $scan_str !~ /\$/ ) {
-            # No line_scan is possible if there's a $ in the regex.
-            $scan_regex = eval { qr/$scan_str/m };
-        }
-    }
-    else {
-        my $err = $@;
-        chomp $err;
-        App::Ack::die( "Invalid regex '$str':\n  $err" );
-    }
-
-    return ($regex, $scan_regex);
-}
 
 my $match_colno;
 
@@ -637,7 +561,7 @@ my $after_context_pending;
 my $printed_lineno;
 
 my $is_first_match;
-state $has_printed_from_any_file = 0;
+state $has_printed_from_any_file;
 
 
 sub file_loop_normal {
@@ -665,7 +589,7 @@ sub file_loop_normal {
         my $needs_line_scan = 1;
         if ( !$opt_passthru && !$opt_v ) {
             $stats{prescans}++;
-            if ( $file->may_be_present( $scan_re ) ) {
+            if ( $file->may_be_present( $re_scan ) ) {
                 $file->reset();
             }
             else {
@@ -686,11 +610,7 @@ sub file_loop_normal {
 sub print_matches_in_file {
     my $file = shift;
 
-    my $max_count = $opt_m || -1;   # Go negative for no limit so it can never reduce to 0.
-    my $nmatches  = 0;
     my $filename  = $file->name;
-
-    my $has_printed_from_this_file = 0;
 
     my $fh = $file->open;
     if ( !$fh ) {
@@ -706,36 +626,182 @@ sub print_matches_in_file {
     }
 
     # Check for context before the main loop, so we don't pay for it if we don't need it.
+    my $nmatches;
+    my $max_count = $opt_m || -1;   # Go negative for no limit so it can never reduce to 0.
     if ( $is_tracking_context ) {
-        local $_ = undef;
+        $nmatches = pmif_context( $fh, $filename, $display_filename, $max_count );
+    }
+    elsif ( $opt_passthru ) {
+        $nmatches = pmif_passthru( $fh, $filename, $display_filename, $max_count );
+    }
+    elsif ( $opt_v ) {
+        $nmatches = pmif_opt_v( $fh, $filename, $display_filename, $max_count );
+    }
+    else {
+        $nmatches = pmif_normal( $fh, $filename, $display_filename, $max_count );
+    }
 
-        $after_context_pending = 0;
+    return $nmatches;
+}
 
-        my $in_range = range_setup();
 
-        while ( <$fh> ) {
-            chomp;
-            $match_colno = undef;
+sub pmif_context {
+    my $fh = shift;
+    my $filename = shift;
+    my $display_filename = shift;
+    my $max_count = shift;
 
-            $in_range = 1 if ( $using_ranges && !$in_range && $opt_range_start && /$opt_range_start/o );
+    my $in_range = range_setup();
+    my $has_printed_from_this_file;
+    my $nmatches = 0;
 
-            my $does_match;
-            if ( $in_range ) {
-                if ( $opt_v ) {
-                    $does_match = !/$search_re/o;
-                }
-                else {
-                    if ( $does_match = /$search_re/o ) {
-                        # @- = @LAST_MATCH_START
-                        # @+ = @LAST_MATCH_END
-                        $match_colno = $-[0] + 1;
-                    }
+    $after_context_pending = 0;
+    local $_ = undef;
+
+    while ( <$fh> ) {
+        chomp;
+        $match_colno = undef;
+
+        $in_range = 1 if ( $using_ranges && !$in_range && defined($opt_range_start) && /$opt_range_start/o );
+
+        my $does_match;
+        if ( $in_range ) {
+            $does_match = /$re_match/o;
+            if ( $does_match && defined($re_not) ) {
+                local @-;
+                $does_match = !/$re_not/o;
+            }
+            if ( $opt_v ) {
+                $does_match = !$does_match;
+            }
+            else {
+                if ( $does_match ) {
+                    # @- = @LAST_MATCH_START
+                    $match_colno = $-[0] + 1;
                 }
             }
+        }
 
-            if ( $does_match && $max_count ) {
+        if ( $does_match && $max_count ) {
+            if ( !$has_printed_from_this_file ) {
+                $stats{filematches}++;
+                if ( $opt_break && $has_printed_from_any_file ) {
+                    App::Ack::print_blank_line();
+                }
+                if ( $opt_show_filename && $opt_heading ) {
+                    App::Ack::say( $display_filename );
+                }
+            }
+            print_line_with_context( $filename, $_, $. );
+            $has_printed_from_this_file = 1;
+            $stats{linematches}++;
+            $nmatches++;
+            $max_count--;
+        }
+        else {
+            if ( $after_context_pending ) {
+                # Disable $opt_column since there are no matches in the context lines.
+                local $opt_column = 0;
+                print_line_with_options( $filename, $_, $., '-' );
+                --$after_context_pending;
+            }
+            elsif ( $n_before_ctx_lines ) {
+                # Save line for "before" context.
+                $before_context_buf[$before_context_pos] = $_;
+                $before_context_pos = ($before_context_pos+1) % $n_before_ctx_lines;
+            }
+        }
+
+        $in_range = 0 if ( $using_ranges && $in_range && defined($opt_range_end) && /$opt_range_end/o );
+
+        last if ($max_count == 0) && ($after_context_pending == 0);
+    }
+
+    return $nmatches;
+}
+
+
+sub pmif_passthru {
+    my $fh = shift;
+    my $filename = shift;
+    my $display_filename = shift;
+    my $max_count = shift;
+
+    my $in_range = range_setup();
+    my $has_printed_from_this_file;
+    my $nmatches = 0;
+
+    local $_ = undef;
+
+    while ( <$fh> ) {
+        chomp;
+
+        $in_range = 1 if ( $using_ranges && !$in_range && defined($opt_range_start) && /$opt_range_start/o );
+
+        $match_colno = undef;
+        my $does_match = /$re_match/o;
+        if ( $does_match && defined($re_not) ) {
+            local @-;
+            $does_match = !/$re_not/o;
+        }
+        if ( $in_range && $does_match ) {
+            $match_colno = $-[0] + 1;
+            if ( !$has_printed_from_this_file ) {
+                if ( $opt_break && $has_printed_from_any_file ) {
+                    App::Ack::print_blank_line();
+                }
+                if ( $opt_show_filename && $opt_heading ) {
+                    App::Ack::say( $display_filename );
+                }
+            }
+            print_line_with_options( $filename, $_, $., ':' );
+            $has_printed_from_this_file = 1;
+            $nmatches++;
+            $max_count--;
+        }
+        else {
+            if ( $opt_break && !$has_printed_from_this_file && $has_printed_from_any_file ) {
+                App::Ack::print_blank_line();
+            }
+            print_line_with_options( $filename, $_, $., '-', 1 );
+            $has_printed_from_this_file = 1;
+        }
+
+        $in_range = 0 if ( $using_ranges && $in_range && defined($opt_range_end) && /$opt_range_end/o );
+
+        last if $max_count == 0;
+    }
+
+    return $nmatches;
+}
+
+
+sub pmif_opt_v {
+    my $fh = shift;
+    my $filename = shift;
+    my $display_filename = shift;
+    my $max_count = shift;
+
+    my $in_range = range_setup();
+    my $has_printed_from_this_file;
+    my $nmatches = 0;
+
+    $match_colno = undef;
+    local $_ = undef;
+
+    while ( <$fh> ) {
+        chomp;
+
+        $in_range = 1 if ( $using_ranges && !$in_range && defined($opt_range_start) && /$opt_range_start/o );
+
+        if ( $in_range ) {
+            my $does_match = /$re_match/o;
+            if ( $does_match && defined($re_not) ) {
+                # local @-; No need to localize this because we don't use @-.
+                $does_match = !/$re_not/o;
+            }
+            if ( !$does_match ) {
                 if ( !$has_printed_from_this_file ) {
-                    $stats{filematches}++;
                     if ( $opt_break && $has_printed_from_any_file ) {
                         App::Ack::print_blank_line();
                     }
@@ -745,45 +811,49 @@ sub print_matches_in_file {
                 }
                 print_line_with_context( $filename, $_, $. );
                 $has_printed_from_this_file = 1;
-                $stats{linematches}++;
                 $nmatches++;
                 $max_count--;
             }
-            else {
-                if ( $after_context_pending ) {
-                    # Disable $opt_column since there are no matches in the context lines.
-                    local $opt_column = 0;
-                    print_line_with_options( $filename, $_, $., '-' );
-                    --$after_context_pending;
-                }
-                elsif ( $n_before_ctx_lines ) {
-                    # Save line for "before" context.
-                    $before_context_buf[$before_context_pos] = $_;
-                    $before_context_pos = ($before_context_pos+1) % $n_before_ctx_lines;
-                }
-            }
-
-            $in_range = 0 if ( $using_ranges && $in_range && $opt_range_end && /$opt_range_end/o );
-
-            last if ($max_count == 0) && ($after_context_pending == 0);
         }
+
+        $in_range = 0 if ( $using_ranges && $in_range && defined($opt_range_end) && /$opt_range_end/o );
+
+        last if $max_count == 0;
     }
-    elsif ( $opt_passthru ) {
-        local $_ = undef;
 
-        my $in_range = range_setup();
+    return $nmatches;
+}
 
-        while ( <$fh> ) {
-            chomp;
 
-            $in_range = 1 if ( $using_ranges && !$in_range && $opt_range_start && /$opt_range_start/o );
+sub pmif_normal {
+    my $fh = shift;
+    my $filename = shift;
+    my $display_filename = shift;
+    my $max_count = shift;
 
+    my $in_range = range_setup();
+    my $has_printed_from_this_file;
+    my $nmatches = 0;
+
+    my $last_match_lineno;
+    local $_ = undef;
+
+    while ( <$fh> ) {
+        chomp;
+
+        $in_range = 1 if ( $using_ranges && !$in_range && defined($opt_range_start) && /$opt_range_start/o );
+
+        if ( $in_range ) {
             $match_colno = undef;
-            if ( $in_range && ($opt_v xor /$search_re/o) ) {
-                if ( !$opt_v ) {
-                    $match_colno = $-[0] + 1;
-                }
+            my $is_match = /$re_match/o;
+            if ( $is_match && defined($re_not) ) {
+                local @-;
+                $is_match = !/$re_not/o;
+            }
+            if ( $is_match ) {
+                $match_colno = $-[0] + 1;
                 if ( !$has_printed_from_this_file ) {
+                    $stats{filematches}++;
                     if ( $opt_break && $has_printed_from_any_file ) {
                         App::Ack::print_blank_line();
                     }
@@ -791,105 +861,29 @@ sub print_matches_in_file {
                         App::Ack::say( $display_filename );
                     }
                 }
+                if ( $opt_p ) {
+                    if ( $last_match_lineno ) {
+                        if ( $. > $last_match_lineno + $opt_p ) {
+                            App::Ack::print_blank_line();
+                        }
+                    }
+                    elsif ( !$opt_break && $has_printed_from_any_file ) {
+                        App::Ack::print_blank_line();
+                    }
+                }
+                s/[\r\n]+$//;
                 print_line_with_options( $filename, $_, $., ':' );
                 $has_printed_from_this_file = 1;
                 $nmatches++;
+                $stats{linematches}++;
                 $max_count--;
+                $last_match_lineno = $.;
             }
-            else {
-                if ( $opt_break && !$has_printed_from_this_file && $has_printed_from_any_file ) {
-                    App::Ack::print_blank_line();
-                }
-                print_line_with_options( $filename, $_, $., '-', 1 );
-                $has_printed_from_this_file = 1;
-            }
-
-            $in_range = 0 if ( $using_ranges && $in_range && $opt_range_end && /$opt_range_end/o );
-
-            last if $max_count == 0;
         }
-    }
-    elsif ( $opt_v ) {
-        local $_ = undef;
 
-        $match_colno = undef;
-        my $in_range = range_setup();
+        $in_range = 0 if ( $using_ranges && $in_range && defined($opt_range_end) && /$opt_range_end/o );
 
-        while ( <$fh> ) {
-            chomp;
-
-            $in_range = 1 if ( $using_ranges && !$in_range && $opt_range_start && /$opt_range_start/o );
-
-            if ( $in_range ) {
-                if ( !/$search_re/o ) {
-                    if ( !$has_printed_from_this_file ) {
-                        if ( $opt_break && $has_printed_from_any_file ) {
-                            App::Ack::print_blank_line();
-                        }
-                        if ( $opt_show_filename && $opt_heading ) {
-                            App::Ack::say( $display_filename );
-                        }
-                    }
-                    print_line_with_context( $filename, $_, $. );
-                    $has_printed_from_this_file = 1;
-                    $nmatches++;
-                    $max_count--;
-                }
-            }
-
-            $in_range = 0 if ( $using_ranges && $in_range && $opt_range_end && /$opt_range_end/o );
-
-            last if $max_count == 0;
-        }
-    }
-    else {  # Normal search: No context, no -v, no --passthru
-        local $_ = undef;
-
-        my $last_match_lineno;
-        my $in_range = range_setup();
-
-        while ( <$fh> ) {
-            chomp;
-
-            $in_range = 1 if ( $using_ranges && !$in_range && $opt_range_start && /$opt_range_start/o );
-
-            if ( $in_range ) {
-                $match_colno = undef;
-                if ( /$search_re/o ) {
-                    $match_colno = $-[0] + 1;
-                    if ( !$has_printed_from_this_file ) {
-                        $stats{filematches}++;
-                        if ( $opt_break && $has_printed_from_any_file ) {
-                            App::Ack::print_blank_line();
-                        }
-                        if ( $opt_show_filename && $opt_heading ) {
-                            App::Ack::say( $display_filename );
-                        }
-                    }
-                    if ( $opt_p ) {
-                        if ( $last_match_lineno ) {
-                            if ( $. > $last_match_lineno + $opt_p ) {
-                                App::Ack::print_blank_line();
-                            }
-                        }
-                        elsif ( !$opt_break && $has_printed_from_any_file ) {
-                            App::Ack::print_blank_line();
-                        }
-                    }
-                    s/[\r\n]+$//;
-                    print_line_with_options( $filename, $_, $., ':' );
-                    $has_printed_from_this_file = 1;
-                    $nmatches++;
-                    $stats{linematches}++;
-                    $max_count--;
-                    $last_match_lineno = $.;
-                }
-            }
-
-            $in_range = 0 if ( $using_ranges && $in_range && $opt_range_end && /$opt_range_end/o );
-
-            last if $max_count == 0;
-        }
+        last if $max_count == 0;
     }
 
     return $nmatches;
@@ -922,7 +916,7 @@ sub print_line_with_options {
     }
 
     if ( $opt_output ) {
-        while ( $line =~ /$search_re/og ) {
+        while ( $line =~ /$re_match/og ) {
             my $output = $opt_output;
             if ( @special_vars_used_by_opt_output ) {
                 no strict;
@@ -944,7 +938,7 @@ sub print_line_with_options {
 
         # We have to do underlining before any highlighting because highlighting modifies string length.
         if ( $opt_underline && !$skip_coloring ) {
-            while ( $line =~ /$search_re/og ) {
+            while ( $line =~ /$re_hilite/og ) {
                 my $match_start = $-[0] // next;
                 my $match_end = $+[0];
                 my $match_length = $match_end - $match_start;
@@ -959,7 +953,7 @@ sub print_line_with_options {
         if ( $opt_color && !$skip_coloring ) {
             my $highlighted = 0; # If highlighted, need to escape afterwards.
 
-            while ( $line =~ /$search_re/og ) {
+            while ( $line =~ /$re_hilite/og ) {
                 my $match_start = $-[0] // next;
                 my $match_end = $+[0];
                 my $match_length = $match_end - $match_start;
@@ -1071,7 +1065,7 @@ sub count_matches_in_file {
     }
     else {
         if ( !$opt_v ) {
-            if ( !$file->may_be_present( $scan_re ) ) {
+            if ( !$file->may_be_present( $re_scan ) ) {
                 $do_scan = 0;
             }
         }
@@ -1086,20 +1080,28 @@ sub count_matches_in_file {
         if ( $using_ranges ) {
             while ( <$fh> ) {
                 chomp;
-                $in_range = 1 if ( !$in_range && $opt_range_start && /$opt_range_start/o );
+                $in_range = 1 if ( !$in_range && defined($opt_range_start) && /$opt_range_start/o );
                 if ( $in_range ) {
-                    if ( /$search_re/o xor $opt_v ) {
+                    my $is_match = /$re_match/o;
+                    if ( $is_match && defined($re_not) ) {
+                        $is_match = !/$re_not/o;
+                    }
+                    if ( $is_match xor $opt_v ) {
                         ++$nmatches;
                         last if $bail;
                     }
                 }
-                $in_range = 0 if ( $in_range && $opt_range_end && /$opt_range_end/o );
+                $in_range = 0 if ( $in_range && defined($opt_range_end) && /$opt_range_end/o );
             }
         }
         else {
             while ( <$fh> ) {
                 chomp;
-                if ( /$search_re/o xor $opt_v ) {
+                my $is_match = /$re_match/o;
+                if ( $is_match && defined($re_not) ) {
+                    $is_match = !/$re_not/o;
+                }
+                if ( $is_match xor $opt_v ) {
                     ++$nmatches;
                     last if $bail;
                 }
@@ -1248,7 +1250,7 @@ lines were in a range and which were out of the range.
 
 You don't have to specify both C<--range-start> and C<--range-end>.  IF
 C<--range-start> is omitted, then the range runs from the first line in the
-file unitl the first line that matches C<--range-end>.  Similarly, if
+file until the first line that matches C<--range-end>.  Similarly, if
 C<--range-end> is omitted, the range runs from the first line matching
 C<--range-start> to the end of the file.
 
@@ -1301,6 +1303,25 @@ matches for lines within the range.
 =item B<--ackrc>
 
 Specifies an ackrc file to load after all others; see L</"ACKRC LOCATION SEMANTICS">.
+
+=item B<--and=PATTERN>
+
+Specifies a I<PATTERN> that MUST ALSO be found on a given line for a match to
+occur. This option can be repeated.
+
+If you want to find all the lines with both "dogs" or "cats", use:
+
+    ack dogs --and cats
+
+Note that the options that affect "dogs" also affect "cats", so if you have
+
+    ack -i -w dogs --and cats
+
+then the search for both "dogs" and "cats" will be case-insensitive and be
+word-limited.
+
+See also the other two boolean options C<--or> and C<--not>, neither of
+which can be used with C<--and>.
 
 =item B<-A I<NUM>>, B<--after-context=I<NUM>>
 
@@ -1541,10 +1562,50 @@ Print this manual page.
 
 No descending into subdirectories.
 
+=item B<--not=PATTERN>
+
+Specifies a I<PATTERN> that must NOT be true on a given line for a match to
+occur. This option can be repeated.
+
+If you want to find all the lines with "dogs" but not if "cats" or "fish"
+appear on the line, use:
+
+    ack dogs --not cats --not fish
+
+Note that the options that affect "dogs" also affect "cats" and "fish", so
+if you have
+
+    ack -i -w dogs --not cats
+
+then the search for both "dogs" and "cats" will be case-insensitive and be
+word-limited.
+
+See also the other two boolean options C<--and> and C<--or>, neither of
+which can be used with C<--not>.
+
 =item B<-o>
 
 Show only the part of each line matching PATTERN (turns off text
 highlighting).  This is exactly the same as C<--output=$&>.
+
+=item B<--or=PATTERN>
+
+Specifies a I<PATTERN> that MAY be found on a given line for a match to
+occur. This option can be repeated.
+
+If you want to find all the lines with "dogs" or "cats", use:
+
+    ack dogs --or cats
+
+Note that the options that affect "dogs" also affect "cats", so if you have
+
+    ack -i -w dogs --or cats
+
+then the search for both "dogs" and "cats" will be case-insensitive and be
+word-limited.
+
+See also the other two boolean options C<--and> and C<--not>, neither of
+which can be used with C<--or>.
 
 =item B<--output=I<expr>>
 
@@ -1576,7 +1637,7 @@ The number of the line in the file.
 
 =item C<$&>, C<$`> and C<$'>
 
-C<$&> is the the string matched by the pattern, C<$`> is what
+C<$&> is the string matched by the pattern, C<$`> is what
 precedes the match, and C<$'> is what follows it.  If the pattern
 is C<gra(ph|nd)> and the string is "lexicographic", then C<$&> is
 "graph", C<$`> is "lexico" and C<$'> is "ic".
@@ -1835,7 +1896,7 @@ an F<.ackrc> file - then you do not have to define your types over and
 over again. In the following examples the options will always be shown
 on one command line so that they can be easily copy & pasted.
 
-File types can be specified both with the the I<--type=xxx> option,
+File types can be specified both with the I<--type=xxx> option,
 or the file type as an option itself.  For example, if you create
 a filetype of "cobol", you can specify I<--type=cobol> or simply
 I<--cobol>.  File types must be at least two characters long.  This
@@ -1934,8 +1995,8 @@ There are four different colors ack uses:
     --------    -----------------   ------------------  ---------------
     filename    --color-filename    ACK_COLOR_FILENAME  black on_yellow
     match       --color-match       ACK_COLOR_MATCH     bold green
-    line no.    --color-lineno      ACK COLOR_LINENO    bold yellow
-    column no.  --color-colno       ACK COLOR_COLNO     bold yellow
+    line no.    --color-lineno      ACK_COLOR_LINENO    bold yellow
+    column no.  --color-colno       ACK_COLOR_COLNO     bold yellow
 
 The column number column is only used if the column number is shown because
 of the --column option.
@@ -2164,7 +2225,7 @@ Options are then loaded from the command line.
 ack is based at GitHub at L<https://github.com/beyondgrep/ack3>
 
 Please report any bugs or feature requests to the issues list at
-Github: L<https://github.com/beyondgrep/ack3/issues>.
+GitHub: L<https://github.com/beyondgrep/ack3/issues>.
 
 Please include the operating system that you're using; the output of
 the command C<ack --version>; and any customizations in your F<.ackrc>
@@ -2191,7 +2252,7 @@ L<https://beyondgrep.com/>
 
 L<https://github.com/beyondgrep/ack3>
 
-=item * The ack issues list at Github
+=item * The ack issues list at GitHub
 
 L<https://github.com/beyondgrep/ack3/issues>
 
@@ -2325,6 +2386,18 @@ mailing list.
 How appropriate to have I<ack>nowledgements!
 
 Thanks to everyone who has contributed to ack in any way, including
+Geraint Edwards,
+Loren Howard,
+Yaroslav Halchenko,
+Thiago Perrotta,
+Thomas Gossler,
+Kieran Mace,
+Volker Glave,
+Axel Beckert,
+Eric Pement,
+Gabor Szabo,
+Frieder Bluemle,
+Grzegorz Kaczmarczyk,
 Dan Book,
 Tomasz Konojacki,
 Salomon Smeke,
@@ -2449,7 +2522,7 @@ Andy Lester, C<< <andy at petdance.com> >>
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2005-2022 Andy Lester.
+Copyright 2005-2025 Andy Lester.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the Artistic License v2.0.

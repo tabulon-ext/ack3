@@ -2,8 +2,66 @@ History file for ack 3.  https://beyondgrep.com/
 
 NEXT
 ========================================
+ack now needs YAML::PP to run its tests.
+
+[FIXES]
+ack's would always set a return code of 1 if -c was used.  Now it properly
+returns 1 if no files match, and 0 if any files match.
+
+
+v3.8.1      Tue Dec 31 21:22:59 CST 2024
+========================================
+[ENHANCEMENTS]
+The rules for Pytest were modified so that zsh's ad hoc scraping of
+filetypes for tab completion wouldn't blow up. (GH #386)
+
+
+v3.8.0      Fri Dec 20 22:07:26 CST 2024
+========================================
+[FEATURES]
+Add --and and --or options to allow combinations of search terms. This is
+in addition to the --not that was added in v3.7.0. (GH #385)
+
+Add support for Pytest filetype.
+
+Add support for Terraform. Thanks, Thiago Perrotta. (GH #377)
+
+[FIXES]
+The ack-standalone that gets built, and is what's available for download at
+https://beyondgrep.com, now puts each of the modules it pulls in into its
+own lexical scope.  This should fix any future conflicts of pragmata that
+might come up in the future. Thanks, mauke. (GH #376)
+
+
+v3.7.0      Sat Feb 25 14:00:57 CST 2023
+========================================
+[FEATURES]
+Added a repeatable --not option to let you supply patterns that should NOT
+match. For example, if you want to search for "dogs" but not if "cats" or
+"fish" are on the same line, you can do:
+
+    ack dogs --not cats --not fish
+
+Added .Rmd to the list of extensions understood to be R. Thanks, Kieran
+Mace. (GH#358)
+
+Added file type for for Powershell (.ps1 and .psm1 files).  Thanks, Thomas
+Gossler, (GH#362)
+
+
+v3.6.0      Sat Aug 20 22:57:47 CDT 2022
+========================================
 [FEATURES]
 Added default ignores for Python's pickle serialization format (GH#348)
+
+Added default ignore for Visual Studio's user & workspace settings. Thanks,
+Gabor Szabo. (GH#324)
+
+Added support for the Crystal language. Thanks, Gabor Szabo. (GH#340)
+
+Fixed some spelling errors. Thanks, Frieder Bluemle. (GH#310)
+
+Added .sbt as a Scala extension. Thanks, Grzegorz Kaczmarczyk. (GH#322)
 
 [DOCS]
 Fixed incorrect example in the docs for --range-start. Thanks, Alex Beamish.
@@ -190,7 +248,7 @@ M. Scott Ford. (GH #208)
 
 v3.0.0      Mon May 27 21:46:34 CDT 2019
 ========================================
-First official release of ack verison 3.
+First official release of ack version 3.
 
 See "Release notes for ack 3.0.0" at the bottom of this document for
 details of what has changed between ack 2.x and ack 3.
@@ -263,7 +321,7 @@ Add -p as a shorter version of --proximate.
 Added -P as a negation of --proximate.  It is the same as --proximate=0.
 If you have --proximate in an .ackrc, -P can be used to cancel it.
 
-Added --ts for Typescript.
+Added --ts for TypeScript.
 
 
 2.999_03 Fri Jan 19 11:02:46 CST 2018
